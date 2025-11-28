@@ -1,0 +1,5 @@
+streamlit
+PyPDF2
+fpdf
+openai
+numpy
