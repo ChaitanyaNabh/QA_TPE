@@ -3,6 +3,7 @@ import PyPDF2
 import io
 import os
 import json
+import secrets
 from openai import OpenAI
 from typing import List
 from pdf_context import find_context_matches
@@ -299,6 +300,54 @@ st.set_page_config(page_title="OASIS TPE Checker", layout="wide")
 # Initialize simple local auth session
 if "user" not in st.session_state:
     st.session_state.user = None
+if "session_token" not in st.session_state:
+    st.session_state.session_token = None
+
+
+@st.cache_resource
+def get_session_store() -> dict:
+    """Global in-memory store mapping session tokens to usernames."""
+    return {}
+
+
+def _restore_session_from_url():
+    """Restore login state from a persisted session token in the URL."""
+    if st.session_state.get("user"):
+        return
+    params = st.query_params
+    token = (params.get("session_token") or [None])[0]
+    if not token:
+        return
+    user = get_session_store().get(token)
+    if user:
+        st.session_state.user = user
+        st.session_state.session_token = token
+    else:
+        st.query_params.clear()
+
+
+def _persist_session(user: str):
+    """Assign a persistent session token for the user and sync it to the URL."""
+    store = get_session_store()
+    prev = st.session_state.get("session_token")
+    if prev and store.get(prev) and store.get(prev) != user:
+        store.pop(prev, None)
+    token = secrets.token_urlsafe(16)
+    store[token] = user
+    st.session_state.session_token = token
+    st.query_params.clear()
+    st.query_params["session_token"] = token
+
+
+def _clear_session():
+    """Logout helper to remove token from store and URL."""
+    store = get_session_store()
+    token = st.session_state.get("session_token")
+    if token:
+        store.pop(token, None)
+    st.session_state.user = None
+    st.session_state.session_token = None
+    st.query_params.clear()
 
 # App styling for a cleaner/professional UI
 st.markdown(
@@ -407,12 +456,14 @@ except Exception:
     # ignore if user already exists or other creation error
     pass
 
+_restore_session_from_url()
+
 # Sidebar: simple login/register UI
 st.sidebar.header("Account")
 if st.session_state.user:
     st.sidebar.write(f"Signed in as: **{st.session_state.user}**")
     if st.sidebar.button("Logout"):
-        st.session_state.user = None
+        _clear_session()
 else:
     # Prefill username for convenience
     login_username = st.sidebar.text_input("Username", value="Chaitanya", key="login_username")
@@ -422,6 +473,7 @@ else:
         if st.button("Login"):
             if verify_user(login_username, login_password):
                 st.session_state.user = login_username
+                _persist_session(login_username)
                 st.sidebar.success("Logged in")
             else:
                 st.sidebar.error("Invalid username or password")
@@ -430,6 +482,7 @@ else:
             try:
                 create_user(login_username, login_password)
                 st.session_state.user = login_username
+                _persist_session(login_username)
                 st.sidebar.success("Registered and logged in")
             except Exception as e:
                 st.sidebar.error(str(e))
@@ -792,4 +845,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
